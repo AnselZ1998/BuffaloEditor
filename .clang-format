@@ -1,0 +1,20 @@
+# MIT License - Copyright (c) 2026 AnselZ
+# SPDX-License-Identifier: MIT
+BasedOnStyle: Microsoft
+IndentWidth: 4
+AccessModifierOffset: -4
+AlignAfterOpenBracket: DontAlign
+LambdaBodyIndentation: OuterScope
+InsertBraces: true
+UseTab: Never
+ColumnLimit: 0
+BreakBeforeBraces: Allman
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+NamespaceIndentation: None
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: None
+SortIncludes: Never

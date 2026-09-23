@@ -6,6 +6,8 @@
 *.lo
 *.o
 *.obj
+# Wavefront OBJ files are model assets, not compiled object files.
+!/model/**/*.obj
 
 # Precompiled Headers
 *.gch
@@ -44,6 +46,14 @@ build/
 Build/
 build-*/
 SoftRasterLab/
+/x64/
+/x86/
+/Debug/
+/Release/
+
+# Visual Studio cache and local CMake overrides
+/.vs/
+CMakeUserPresets.json
 
 # CMake generated files
 CMakeFiles/
@@ -59,6 +69,9 @@ compile_commands.json
 *.bak
 *.swp
 
+# Temporary floder
+bak/
+
 # vcpkg
 vcpkg_installed/
 
@@ -68,3 +81,8 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Buffalo generated output
+Buffalo/
+buffalo-layout.ini
+buffalo-editor-preview.png

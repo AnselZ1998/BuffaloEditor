@@ -1,0 +1,27 @@
+{
+  "cmake.generator": "Visual Studio 17 2022",
+  "cmake.platform": "x64",
+  "cmake.buildDirectory": "${workspaceFolder}/build-editor",
+  "cmake.buildType": "Debug",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "cmake.configureSettings": {
+    "CMAKE_PREFIX_PATH": "C:/Users/zhaijiafeng/Documents/Codex/Dependencies/Qt/6.8.3/msvc2022_64",
+    "BUFFALO_BUILD_TESTS": "ON"
+  },
+  "files.exclude": {
+    "bak": true,
+    "build": true,
+    "build-*": true
+  },
+  "search.exclude": {
+    "bak/**": true,
+    "build/**": true,
+    "build-*/**": true
+  },
+  "[cpp]": {
+    "editor.defaultFormatter": "ms-vscode.cpptools",
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true
+  },
+  "C_Cpp.clang_format_style": "file"
+}

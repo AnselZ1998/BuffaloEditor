@@ -1,0 +1,37 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Buffalo Editor (Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-editor/Debug/BuffaloEditor.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "environment": [],
+      "console": "internalConsole",
+      "preLaunchTask": "CMake: build Debug"
+    },
+    {
+      "name": "CPU Simulation Tests (Debug)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-editor/Debug/SimulationTests.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "preLaunchTask": "CMake: build tests"
+    },
+    {
+      "name": "OpenGL Tests (Debug, real GPU)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build-editor/Debug/OpenGLTests.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "preLaunchTask": "CMake: build tests"
+    }
+  ]
+}
