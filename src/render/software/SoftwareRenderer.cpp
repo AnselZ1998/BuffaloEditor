@@ -1,5 +1,10 @@
+// MIT License - Copyright (c) 2026 AnselZ
+// SPDX-License-Identifier: MIT
+
 #include "render/software/SoftwareRenderer.h"
 #include "render/material/Material.h"
+#include "render/material/MaterialShaderParameters.h"
+
 #include <cstdlib>
 
 bool SoftwareRenderer::StartUp(int width, int height)
@@ -18,7 +23,7 @@ bool SoftwareRenderer::StartUp(int width, int height)
     {
         return false;
     }
-    
+
     if (!mRasterizer.StartUp(&mColorBuffer, &mDepthBuffer))
     {
         return false;
@@ -48,12 +53,15 @@ void SoftwareRenderer::Resize(int width, int height)
 
 void SoftwareRenderer::ShutDown()
 {
-    if (mIsStarted)
-    {
-        mIsStarted = false;
-    }
+    mIsStarted = false;
     mRasterizer.ShutDown();
     mCamera = nullptr;
+
+    mColorBuffer = Buffer<std::uint32_t>{};
+    mDepthBuffer = Buffer<float>{};
+
+    swWidth = 0;
+    swHeight = 0;
 }
 
 void SoftwareRenderer::BeginFrame(std::uint32_t clearColor)
@@ -86,6 +94,7 @@ void SoftwareRenderer::drawTriangularMesh(Model* currentModel)
 
     const Mesh* mesh = currentModel->GetMesh();
     Material* material = currentModel->GetMaterial();
+    MaterialShaderParameters params = material->GetShaderParameters();
     Shader* shader = material->GetShader();
 
     if (mesh == nullptr || !mesh->IsValid())
@@ -101,7 +110,22 @@ void SoftwareRenderer::drawTriangularMesh(Model* currentModel)
     // Model (local -> world). The editor/runtime owns the transform;
     // the renderer only consumes the matrix.
     const Matrix4 model = currentModel->GetModelMatrix();
-    
+    const Vector3 column0(model._11, model._21, model._31);
+    const Vector3 column1(model._12, model._22, model._32);
+    const Vector3 column2(model._13, model._23, model._33);
+    const float modelDeterminant = Vector3::Dot(column0, Vector3::Cross(column1, column2));
+    if (std::abs(modelDeterminant) < 1e-12f)
+    {
+        return;
+    }
+    const auto transformNormal = [&](const Vector4& n)
+    {
+        return ((Vector3::Cross(column1, column2) * n.x + Vector3::Cross(column2, column0) * n.y +
+                    Vector3::Cross(column0, column1) * n.z) *
+                (1.0f / modelDeterminant))
+            .Normalized();
+    };
+
     // View (world -> view)
     const Matrix4 view = mCamera->viewMatrix;
     const Matrix4 projection = mCamera->projectionMatrix;
@@ -109,7 +133,7 @@ void SoftwareRenderer::drawTriangularMesh(Model* currentModel)
     // Projection (View -> Clip)
     Matrix4 vp = projection * view;
 
-    for (int face = 0;face < mesh->numFaces;face++)
+    for (int face = 0; face < mesh->numFaces; face++)
     {
         const Vector3i& vertexFace = mesh->vertexIndices[face];
         const Vector3i& uvFace = mesh->uvIndices[face];
@@ -127,7 +151,7 @@ void SoftwareRenderer::drawTriangularMesh(Model* currentModel)
         {
             continue;
         }
-   
+
         const Vector3& p0 = mesh->vertices[vertexFace.x];
         const Vector3& p1 = mesh->vertices[vertexFace.y];
         const Vector3& p2 = mesh->vertices[vertexFace.z];
@@ -148,13 +172,26 @@ void SoftwareRenderer::drawTriangularMesh(Model* currentModel)
         const Vector3& uv1 = mesh->uv[uvFace.y];
         const Vector3& uv2 = mesh->uv[uvFace.z];
 
+        const Vector3 edge1 = worldP1 - worldP0;
+        const Vector3 edge2 = worldP2 - worldP0;
+        const Vector3 duv1 = uv1 - uv0;
+        const Vector3 duv2 = uv2 - uv0;
+        const float determinant = duv1.x * duv2.y - duv1.y * duv2.x;
+        params.tangent = {};
+        params.bitangent = {};
+        if (std::abs(determinant) > 1e-6f)
+        {
+            params.tangent = (edge1 * duv2.y - edge2 * duv1.y) * (1.0f / determinant);
+            params.bitangent = (edge2 * duv1.x - edge1 * duv2.x) * (1.0f / determinant);
+        }
+
         Vector4 n0Local(mesh->normals[normalFace.x].x, mesh->normals[normalFace.x].y, mesh->normals[normalFace.x].z, 0.0f);
         Vector4 n1Local(mesh->normals[normalFace.y].x, mesh->normals[normalFace.y].y, mesh->normals[normalFace.y].z, 0.0f);
         Vector4 n2Local(mesh->normals[normalFace.z].x, mesh->normals[normalFace.z].y, mesh->normals[normalFace.z].z, 0.0f);
 
-        Vector3 n0 = (model * n0Local).XYZ().Normalized();
-        Vector3 n1 = (model * n1Local).XYZ().Normalized();
-        Vector3 n2 = (model * n2Local).XYZ().Normalized();
+        Vector3 n0 = transformNormal(n0Local);
+        Vector3 n1 = transformNormal(n1Local);
+        Vector3 n2 = transformNormal(n2Local);
 
         // position and normal can changed:
         // local space -> world space
@@ -178,25 +215,36 @@ void SoftwareRenderer::drawTriangularMesh(Model* currentModel)
         ClipVertex clipP1 = WorldToClip(v1, vp);
         ClipVertex clipP2 = WorldToClip(v2, vp);
 
-        // Clip
-        bool in0 = IsInsideNear(clipP0);
-        bool in1 = IsInsideNear(clipP1);
-        bool in2 = IsInsideNear(clipP2);
+        // 6 - plane clipping
+        const ClipPlane planes[] = {ClipPlane::Left, ClipPlane::Right, ClipPlane::Bottom, ClipPlane::Top, ClipPlane::Near, ClipPlane::Far};
+        std::vector<ClipVertex> polygon = {clipP0, clipP1, clipP2};
 
-        int insideCount = static_cast<int>(in0) + static_cast<int>(in1) + static_cast<int>(in2);
-
-        if (insideCount == 0)
+        for (ClipPlane plane : planes)
         {
-            continue;
+            polygon = ClipAgainstPlane(polygon, plane);
+            if (polygon.empty())
+            {
+                break;
+            }
         }
+        for (size_t i = 1; i + 1 < polygon.size(); ++i)
+        {
+            const ClipVertex& v0 = polygon[0];
+            const ClipVertex& v1 = polygon[i];
+            const ClipVertex& v2 = polygon[i + 1];
 
-        // Clip -> NDC -> Screen
-        RasterVertex screenP0 = TransformToScreen(clipP0, vp);
-        RasterVertex screenP1 = TransformToScreen(clipP1, vp);
-        RasterVertex screenP2 = TransformToScreen(clipP2, vp);
+            // Clip -> NDC -> Screen
+            RasterVertex screenP0 = TransformToScreen(v0, vp);
+            RasterVertex screenP1 = TransformToScreen(v1, vp);
+            RasterVertex screenP2 = TransformToScreen(v2, vp);
 
-        mRasterizer.DrawTriangle(screenP0, screenP1, screenP2, shader);
-
+            mRasterizer.DrawTriangle(
+                screenP0,
+                screenP1,
+                screenP2,
+                shader,
+                params);
+        }
     }
 }
 
@@ -207,6 +255,8 @@ ClipVertex SoftwareRenderer::WorldToClip(const WorldVertex& input, const Matrix4
     Vector4 clipPos = vp * Vector4::FromPoint(input.position);
 
     clipOut.position = clipPos;
+
+    // Normal also in World Space
     clipOut.normal = input.normal;
     clipOut.uv = input.uv;
 
@@ -238,7 +288,96 @@ bool SoftwareRenderer::IsValidIndex(int index, size_t size)
     return index >= 0 && index < static_cast<int>(size);
 }
 
-const bool SoftwareRenderer::IsInsideNear(const ClipVertex& v)
+float SoftwareRenderer::PlaneDistance(const ClipVertex& v, const ClipPlane plane)
 {
-    return v.position.z >= 0;
+    float w = v.position.w;
+    float x = v.position.x;
+    float y = v.position.y;
+    float z = v.position.z;
+
+    switch (plane)
+    {
+    case ClipPlane::Left:
+        return x + w;
+
+    case ClipPlane::Right:
+        return w - x;
+
+    case ClipPlane::Bottom:
+        return y + w;
+
+    case ClipPlane::Top:
+        return w - y;
+
+    case ClipPlane::Near:
+        return z;
+
+    case ClipPlane::Far:
+        return w - z;
+    }
+
+    return -1.0f;
+}
+
+ClipVertex SoftwareRenderer::InterpolateClipVertex(const ClipVertex& a, const ClipVertex& b, float t)
+{
+    ClipVertex result;
+
+    result.position = a.position + (b.position - a.position) * t;
+    result.normal = a.normal + (b.normal - a.normal) * t;
+    result.uv = a.uv + (b.uv - a.uv) * t;
+
+    return result;
+}
+
+std::vector<ClipVertex> SoftwareRenderer::ClipAgainstPlane(const std::vector<ClipVertex>& input, ClipPlane plane)
+{
+    std::vector<ClipVertex> output;
+
+    ClipVertex previous = input.back();
+    float previousDistance = PlaneDistance(previous, plane);
+    bool previousInside = previousDistance >= 0.0f;
+
+    for (const ClipVertex& current : input)
+    {
+        float currentDistance = PlaneDistance(current, plane);
+        bool currentInside = currentDistance >= 0.0f;
+
+        // inside -> inside
+        if (previousInside && currentInside)
+        {
+            output.push_back(current);
+        }
+
+        // inside -> outside
+        else if (previousInside && !currentInside)
+        {
+            float t = previousDistance / (previousDistance - currentDistance);
+            ClipVertex intersection = InterpolateClipVertex(previous, current, t);
+            output.push_back(intersection);
+        }
+
+        // outside -> inside
+        else if (!previousInside && currentInside)
+        {
+            float t = previousDistance / (previousDistance - currentDistance);
+
+            ClipVertex intersection = InterpolateClipVertex(previous, current, t);
+
+            output.push_back(intersection);
+            output.push_back(current);
+        }
+
+        // outside -> outside
+        else
+        {
+            // output nothing
+        }
+
+        previous = current;
+        previousDistance = currentDistance;
+        previousInside = currentInside;
+    }
+
+    return output;
 }

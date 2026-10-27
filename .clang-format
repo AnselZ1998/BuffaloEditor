@@ -18,3 +18,4 @@ AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 AllowShortLambdasOnASingleLine: None
 SortIncludes: Never
+LineEnding: LF

@@ -7,6 +7,7 @@
 #include "math/Bounds.h"
 #include "render/shader/Shader.h"
 #include "render/PipelineTypes.h"
+#include "render/material/MaterialShaderParameters.h"
 
 class Rasterizer
 {
@@ -24,7 +25,9 @@ public:
 	void DrawTriangle(const RasterVertex& v0,
 					  const RasterVertex& v1,
 					  const RasterVertex& v2,
-					  Shader* mShader);
+					  Shader* mShader,
+					  MaterialShaderParameters params
+					);
 
 private:
 	Buffer<std::uint32_t>* mColorBuffer = nullptr;

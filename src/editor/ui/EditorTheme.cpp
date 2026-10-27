@@ -32,12 +32,17 @@ bool EditorTheme::Apply(QApplication& application)
     {
         application.setWindowIcon(logo);
     }
-    QFile style(":/buffalo/themes/buffalo_dark.qss");
-    if (!style.open(QIODevice::ReadOnly))
+    QString combined;
+    for (const auto* path : {"buffalo_dark.qss", "controls/inputs.qss", "panels/panels.qss", "panels/viewport/viewportbar.qss"})
     {
-        return false;
+        QFile style(QString(":/buffalo/themes/") + path);
+        if (!style.open(QIODevice::ReadOnly))
+        {
+            return false;
+        }
+        combined += QString::fromUtf8(style.readAll()) + "\n";
     }
-    application.setStyleSheet(QString::fromUtf8(style.readAll()));
+    application.setStyleSheet(combined);
     return true;
 }
 

@@ -2,28 +2,24 @@
 // SPDX-License-Identifier: MIT
 
 #include "editor/services/SelectionService.h"
-
 namespace buffalo::editor
 {
 SelectionService::SelectionService(QObject* parent)
     : QObject(parent)
 {
 }
-
-const QString& SelectionService::SelectedId() const
+const SelectionTarget& SelectionService::Selected() const
 {
-    return selectedId_;
+    return selected_;
 }
-
-void SelectionService::Select(const QString& id)
+void SelectionService::Select(const SelectionTarget& target)
 {
-    if (selectedId_ != id)
+    if (selected_ != target)
     {
-        selectedId_ = id;
+        selected_ = target;
         emit SelectionChanged();
     }
 }
-
 void SelectionService::Clear()
 {
     Select({});

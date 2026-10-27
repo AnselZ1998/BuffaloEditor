@@ -1,28 +1,23 @@
+// MIT License - Copyright (c) 2026 AnselZ
+// SPDX-License-Identifier: MIT
+
 #pragma once
-
 #include "scene/Scene.h"
-#include <string>
-
 class SceneManager
 {
 public:
-	SceneManager() = default;
-	~SceneManager() = default;
-
-	bool StartUp();
-	void ShutDown();
-	Scene* GetCurrentScene();
-	//Todo: we can change Current Scene~
-	// void ChangeCurrentScene(std::string sceneID);
+    bool StartUp();
+    void ShutDown();
+    Scene& CreateScene(const std::string& name);
+    bool SetCurrentScene(SceneId id);
+    Scene* GetCurrentScene() const;
+    Scene* FindScene(SceneId id) const;
+    const std::vector<std::unique_ptr<Scene>>& GetScenes() const
+    {
+        return scenes_;
+    }
 
 private:
-	bool LoadScene(std::string sceneID);
-	// Todo
-	bool ShutDowmScene(std::string sceneID);
-
-	std::string currentSceneID;
-	bool mIsStarted = false;
-	// SceneManager owns Scene lifetime; callers must not track allocation or delete it.
-	Scene* mScene = nullptr;
+    SceneId current_ = 0;
+    std::vector<std::unique_ptr<Scene>> scenes_;
 };
-

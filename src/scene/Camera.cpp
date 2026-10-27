@@ -1,7 +1,31 @@
-#include "scene/Camera.h"
+// MIT License - Copyright (c) 2026 AnselZ
+// SPDX-License-Identifier: MIT
 
+#include "scene/Camera.h"
 #include <algorithm>
 #include <cmath>
+
+Camera::Camera(const Camera& other)
+    : Camera()
+{
+    *this = other;
+}
+
+Camera& Camera::operator=(const Camera& other)
+{
+    // Copy settings, never identity.
+    name = other.name;
+    position = other.position;
+    target = other.target;
+    up = other.up;
+    fovYRadians = other.fovYRadians;
+    aspect = other.aspect;
+    autoAspect = other.autoAspect;
+    nearZ = other.nearZ;
+    farZ = other.farZ;
+    UpdateMatrices();
+    return *this;
+}
 
 Camera::Camera()
 {
@@ -41,13 +65,11 @@ void Camera::UpdateMatrices()
     viewMatrix = Matrix4::LookAtRH(
         position,
         target,
-        up
-    );
+        up);
 
     projectionMatrix = Matrix4::PerspectiveRH(
         fovYRadians,
         aspect,
         nearZ,
-        farZ
-    );
+        farZ);
 }

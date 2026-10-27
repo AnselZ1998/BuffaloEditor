@@ -25,7 +25,7 @@ OUTPUT_FILE_NAME = "project_source.md"
 # ============================================================
 
 # 当前 Python 脚本所在目录
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 
 
 def get_desktop_path() -> Path:

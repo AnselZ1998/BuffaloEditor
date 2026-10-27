@@ -6,6 +6,7 @@
 #include "editor/services/EditorContext.h"
 #include "editor/services/EditorLog.h"
 #include "editor/services/SelectionService.h"
+#include "editor/scene/SceneEditorController.h"
 #include "editor/viewport/ViewportController.h"
 #include "editor/panels/viewport/ViewportPanel.h"
 #include "editor/panels/hierarchy/HierarchyPanel.h"
@@ -22,6 +23,8 @@
 #include <QDockWidget>
 #include <QElapsedTimer>
 #include <QOpenGLContext>
+#include <QOpenGLWidget>
+#include <QPainter>
 #include <QSettings>
 #include <QSurfaceFormat>
 #include <QStatusBar>
@@ -39,12 +42,21 @@ int EditorApplication::Run(int argc, char* argv[])
     glFormat.setVersion(3, 3);
     glFormat.setProfile(QSurfaceFormat::CoreProfile);
     QSurfaceFormat::setDefaultFormat(glFormat);
+
+    // Qt
     QApplication application(argc, argv);
     QApplication::setApplicationName("BuffaloEditor");
     QApplication::setOrganizationName("Buffalo");
     const bool themeReady = EditorTheme::Apply(application);
+    
+    // Log
+    EditorLog log;
+    log.SetLevel(LogLevel::Info);
 
+    // Runtime
     EngineRuntime runtime;
+    runtime.SetLogger(&log);
+    
     std::string startupError;
     try
     {
@@ -58,7 +70,6 @@ int EditorApplication::Run(int argc, char* argv[])
         startupError = std::string("Runtime startup failed: ") + error.what();
     }
 
-    EditorLog log;
     SelectionService selection;
     EditorContext context(runtime, selection, log);
     log.Info(startupError.empty() ? "Buffalo Runtime ready. Software backend registered." : startupError);
@@ -81,10 +92,22 @@ int EditorApplication::Run(int argc, char* argv[])
 
     {
         ViewportController viewport(context.runtime, context.log);
+        SceneEditorController sceneEditor(runtime, selection, log);
         // Temporary unique ownership is released when the Qt shell adopts each panel.
         auto viewportPanel = std::make_unique<ViewportPanel>(viewport);
-        auto hierarchyPanel = std::make_unique<HierarchyPanel>(context.selection, runtime.IsStarted());
-        auto inspectorPanel = std::make_unique<InspectorPanel>(context.selection);
+        auto hierarchyPanel = std::make_unique<HierarchyPanel>(sceneEditor, selection);
+        auto inspectorPanel = std::make_unique<InspectorPanel>(sceneEditor, selection);
+        if (auto* scene = runtime.GetSceneManager().GetCurrentScene())
+        {
+            if (!scene->Models().empty())
+            {
+                selection.Select({SelectionKind::Model, scene->Id(), scene->Models().front()->Id()});
+            }
+            else
+            {
+                selection.Select({SelectionKind::Scene, scene->Id(), 0});
+            }
+        }
         auto logPanel = std::make_unique<LogPanel>(context.log);
         auto simulationPanel = std::make_unique<SimulationPanel>(runtime);
         auto* simulationWidget = simulationPanel.get();
@@ -122,7 +145,7 @@ int EditorApplication::Run(int argc, char* argv[])
         auto* inspectorDock = editor.AddDock("Inspector", "InspectorDock", inspectorPanel.release(), Qt::RightDockWidgetArea);
         auto* logDock = editor.AddDock("Log", "LogDock", logPanel.release(), Qt::BottomDockWidgetArea);
         auto* simulationDock = editor.AddDock("Simulation", "SimulationDock", simulationPanel.release(), Qt::BottomDockWidgetArea);
-        editor.resizeDocks({hierarchyDock, inspectorDock}, {230, 280}, Qt::Horizontal);
+        editor.resizeDocks({hierarchyDock, inspectorDock}, {230, 380}, Qt::Horizontal);
         editor.splitDockWidget(logDock, simulationDock, Qt::Vertical);
         editor.setCorner(Qt::BottomLeftCorner, Qt::BottomDockWidgetArea);
         editor.setCorner(Qt::BottomRightCorner, Qt::BottomDockWidgetArea);
@@ -163,9 +186,33 @@ int EditorApplication::Run(int argc, char* argv[])
         {
             QTimer::singleShot(1200, &editor, [&]()
             {
-                const bool saved = !capturePreview || editor.grab().save(output.filePath("buffalo-editor-preview.png"));
+                viewportWidget->Refresh();
+                const auto frame = viewport.RenderFrame();
+                bool saved = true;
+                if (capturePreview)
+                {
+                    QPixmap preview = editor.grab();
+                    // QOpenGLWidget content must be captured from its framebuffer.
+                    const auto presenters = editor.findChildren<QOpenGLWidget*>();
+                    for (auto* presenter : presenters)
+                    {
+                        if (presenter->isVisible())
+                        {
+                            const QImage image = presenter->grabFramebuffer();
+                            QPainter painter(&preview);
+                            painter.drawImage(QRect(presenter->mapTo(&editor, QPoint()), presenter->size()), image);
+                        }
+                    }
+                    saved = preview.save(output.filePath("buffalo-editor-preview.png"));
+                    log.SaveLog(output.filePath("preview-log.txt").toStdString());
+                    if (frame.IsValid() && frame.storage == FrameStorage::CpuPixels)
+                    {
+                        const QImage image(reinterpret_cast<const uchar*>(frame.pixels), frame.width, frame.height, frame.rowPitchBytes, QImage::Format_ARGB32);
+                        image.save(output.filePath("preview-render.png"));
+                    }
+                }
                 const bool requestedBackendReady = !requestOpenGL || (openGLRegistered && runtime.GetRenderSystem().ActiveBackend() == openGLBackendIndex);
-                application.exit(saved && runtime.IsStarted() && requestedBackendReady ? 0 : 1);
+                application.exit(saved && frame.IsValid() && runtime.IsStarted() && requestedBackendReady ? 0 : 1);
             });
         }
         result = application.exec();

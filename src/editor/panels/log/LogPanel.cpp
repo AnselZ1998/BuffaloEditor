@@ -4,6 +4,7 @@
 #include "editor/panels/log/LogPanel.h"
 
 #include <QHBoxLayout>
+#include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
@@ -24,7 +25,17 @@ LogPanel::LogPanel(EditorLog& log, QWidget* parent)
     clear->setObjectName("ClearLog");
     tools->addWidget(clear);
     tools->addStretch();
-    tools->addWidget(new QLabel("Editor log", this));
+    auto* level = new QComboBox(this);
+    level->setObjectName("LogLevel");
+    level->addItems({"Trace", "Debug", "Info", "Warning", "Error"});
+    level->setCurrentIndex(static_cast<int>(log.GetLevel()));
+    level->setToolTip("Minimum level for newly recorded messages");
+    tools->addWidget(level);
+    connect(level, &QComboBox::currentIndexChanged, this, [this](int index)
+    {
+        log_.SetLevel(static_cast<LogLevel>(index));
+    });
+    tools->addWidget(new QLabel("Runtime / Render / Editor", this));
     layout->addLayout(tools);
 
     messages_ = new QPlainTextEdit(this);

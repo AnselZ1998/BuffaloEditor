@@ -75,6 +75,21 @@ void ViewportController::OnInput(const InputEvent& event)
         return;
     }
 
+    // Read the current camera before navigation, including Inspector edits and scene switches.
+    auto* currentScene = runtime_.GetSceneManager().GetCurrentScene();
+    auto* currentCamera = currentScene ? currentScene->getCurrentCamera() : nullptr;
+    if (!currentCamera)
+    {
+        return;
+    }
+    target_ = currentCamera->target;
+    const Vector3 offset = currentCamera->position - target_;
+    distance_ = std::max(0.001f, offset.Length());
+    yaw_ = std::atan2(offset.x, offset.z);
+    pitch_ = std::asin(std::clamp(offset.y / distance_, -1.0f, 1.0f));
+    const auto bounds = currentScene->GetWorldBounds();
+    radius_ = bounds.valid ? std::max(0.1f, bounds.Radius()) : 1.0f;
+
     switch (event.action)
     {
     case InputAction::Orbit:
@@ -196,15 +211,10 @@ void ViewportController::ApplyCameraNavigation()
 
     camera->target = target_;
     camera->position = target_ + backward * distance_;
-    camera->up = Vector3(0.0f, 1.0f, 0.0f);
 
-    camera->aspect = height_ > 0
+    camera->aspect = camera->autoAspect && height_ > 0
                          ? static_cast<float>(width_) / static_cast<float>(height_)
-                         : 1.0f;
-
-    camera->nearZ = std::max(0.01f, radius_ * 0.01f);
-    camera->farZ = std::max(1000.0f, radius_ * 100.0f);
-    camera->fovYRadians = 1.047197551f;
+                         : camera->aspect;
 
     camera->UpdateMatrices();
 }
@@ -216,8 +226,6 @@ ViewportFrame ViewportController::RenderFrame()
         return ViewportFrame{};
     }
 
-    ApplyCameraNavigation();
-
     Scene* scene = runtime_.GetSceneManager().GetCurrentScene();
 
     if (scene == nullptr)
@@ -227,6 +235,14 @@ ViewportFrame ViewportController::RenderFrame()
 
     try
     {
+        if (auto* camera = scene->getCurrentCamera())
+        {
+            if (camera->autoAspect)
+            {
+                camera->aspect = static_cast<float>(width_) / height_;
+            }
+            camera->UpdateMatrices();
+        }
         return runtime_.GetRenderSystem().Render(*scene, width_, height_);
     }
     catch (const std::exception& error)

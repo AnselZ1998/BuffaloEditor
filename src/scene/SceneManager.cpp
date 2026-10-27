@@ -1,40 +1,51 @@
-#include "scene/SceneManager.h"
-#include <iostream>
+// MIT License - Copyright (c) 2026 AnselZ
+// SPDX-License-Identifier: MIT
 
+#include "scene/SceneManager.h"
 bool SceneManager::StartUp()
 {
-    if (mIsStarted)
+    if (scenes_.empty())
     {
-        return true;
+        scenes_.push_back(std::make_unique<Scene>("Default Scene"));
+        current_ = scenes_.back()->Id();
     }
-
-    currentSceneID = "defaultScene";
-    // LoadScene reports Model availability; an empty Scene is still valid.
-    if (!LoadScene(currentSceneID))
-    {
-        std::clog << "Scene has no renderable Model; starting with an empty Scene.\n";
-    }
-
-    mIsStarted = true;
     return true;
 }
-
 void SceneManager::ShutDown()
 {
-    delete mScene;
-    mScene = nullptr;
-    mIsStarted = false;
+    current_ = 0;
+    scenes_.clear();
 }
-
-Scene* SceneManager::GetCurrentScene()
+Scene& SceneManager::CreateScene(const std::string& name)
 {
-    return mScene;
+    scenes_.push_back(std::make_unique<Scene>(name, false));
+    if (!current_)
+    {
+        current_ = scenes_.back()->Id();
+    }
+    return *scenes_.back();
 }
-
-bool SceneManager::LoadScene(std::string sceneID)
+bool SceneManager::SetCurrentScene(SceneId id)
 {
-    // Release any previous Scene here; outer systems need no allocation guard.
-    ShutDown();
-    mScene = new Scene(sceneID);
-    return mScene->CheckIfEmpty();
+    if (!FindScene(id))
+    {
+        return false;
+    }
+    current_ = id;
+    return true;
+}
+Scene* SceneManager::GetCurrentScene() const
+{
+    return FindScene(current_);
+}
+Scene* SceneManager::FindScene(SceneId id) const
+{
+    for (const auto& scene : scenes_)
+    {
+        if (scene->Id() == id)
+        {
+            return scene.get();
+        }
+    }
+    return nullptr;
 }

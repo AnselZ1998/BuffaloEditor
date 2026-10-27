@@ -8,14 +8,39 @@
 
 namespace buffalo
 {
-EngineRuntime::EngineRuntime()
-    : simulation_(std::make_unique<CpuRigidBodySolver>())
+EngineRuntime::EngineRuntime(): simulation_(std::make_unique<CpuRigidBodySolver>())
 {
 }
 
 EngineRuntime::~EngineRuntime()
 {
     ShutDown();
+}
+
+void EngineRuntime::SetLogger(ILogger* logger)
+{
+    logger_ = logger;
+    renderSystem_.SetLogger(logger);
+}
+
+void EngineRuntime::RebindSimulation()
+{
+    if (logger_)
+    {
+        logger_->Debug("Runtime: rebinding simulation to current Scene.");
+    }
+    simulation_.Pause();
+    simulationBinding_.Clear();
+    Scene* scene = sceneManager_.GetCurrentScene();
+    simulationScene_ = scene ? scene->Id() : 0;
+    if (scene)
+    {
+        simulationBinding_.Bind(*scene, simulation_);
+    }
+    else
+    {
+        simulation_.Initialize({}, {});
+    }
 }
 
 bool EngineRuntime::StartUp()
@@ -33,16 +58,28 @@ bool EngineRuntime::StartUp()
             return false;
         }
         renderSystem_.AddBackend(std::make_unique<SoftwareRenderBackend>());
-        simulationBinding_.Bind(*sceneManager_.GetCurrentScene(), simulation_);
+        RebindSimulation();
+        if (logger_)
+        {
+            logger_->Info("Runtime started.");
+            if (!sceneManager_.GetCurrentScene()->CheckIfEmpty())
+            {
+                logger_->Warning("Default Scene contains no renderable model.");
+            }
+        }
 
         // TODO: add other render here
-        // renderSystem_.AddBackend(std::make_unique<OpenGLRenderBackend>());
+        // When we Create QOpenGLContext, use AddBackend() register OpenGLRenderBackend
 
         started_ = true;
         return true;
     }
     catch (...)
     {
+        if (logger_)
+        {
+            logger_->Error("Runtime startup failed.");
+        }
         ShutDown();
         throw;
     }
@@ -50,6 +87,10 @@ bool EngineRuntime::StartUp()
 
 void EngineRuntime::ShutDown()
 {
+    if (started_ && logger_)
+    {
+        logger_->Info("Runtime shutdown.");
+    }
     simulation_.Pause();
     simulationBinding_.Clear();
     simulation_.Initialize({}, {});
@@ -58,6 +99,7 @@ void EngineRuntime::ShutDown()
     // SceneManager makes repeated shutdown safe and owns Scene cleanup.
     sceneManager_.ShutDown();
     started_ = false;
+    simulationScene_ = 0;
 }
 
 bool EngineRuntime::IsStarted() const
@@ -87,6 +129,15 @@ void EngineRuntime::Update(double elapsedSeconds)
         return;
     }
     const auto previousStep = simulation_.StepCount();
+    Scene* scene = sceneManager_.GetCurrentScene();
+    if ((scene ? scene->Id() : 0) != simulationScene_)
+    {
+        RebindSimulation();
+    }
+    if (scene)
+    {
+        scene->UpdateLights(elapsedSeconds);
+    }
     simulation_.Update(elapsedSeconds);
     if (simulation_.StepCount() != previousStep)
     {
@@ -96,6 +147,11 @@ void EngineRuntime::Update(double elapsedSeconds)
 
 void EngineRuntime::PlaySimulation()
 {
+    Scene* scene = sceneManager_.GetCurrentScene();
+    if ((scene ? scene->Id() : 0) != simulationScene_)
+    {
+        RebindSimulation();
+    }
     if (started_)
     {
         simulation_.Play();
@@ -111,6 +167,11 @@ void EngineRuntime::StepSimulation()
     {
         return;
     }
+    Scene* scene = sceneManager_.GetCurrentScene();
+    if ((scene ? scene->Id() : 0) != simulationScene_)
+    {
+        RebindSimulation();
+    }
     simulation_.StepOnce();
     simulationBinding_.Apply(simulation_);
 }
@@ -119,6 +180,11 @@ void EngineRuntime::ResetSimulation()
     if (!started_)
     {
         return;
+    }
+    Scene* scene = sceneManager_.GetCurrentScene();
+    if ((scene ? scene->Id() : 0) != simulationScene_)
+    {
+        RebindSimulation();
     }
     simulation_.Reset();
     simulationBinding_.Apply(simulation_);

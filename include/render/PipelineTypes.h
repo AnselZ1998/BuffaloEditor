@@ -33,3 +33,14 @@ struct FragmentInput
     Vector3 uv;
     float depth;
 };
+
+// enum class
+enum class ClipPlane
+{
+    Left,
+    Right,
+    Bottom,
+    Top,
+    Near,
+    Far
+};

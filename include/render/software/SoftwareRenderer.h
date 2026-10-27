@@ -27,8 +27,10 @@ public:
 	RasterVertex TransformToScreen(const ClipVertex& input, const Matrix4& mvp);
 
 	static bool IsValidIndex(int index, size_t size);
-	const bool IsInsideNear(const ClipVertex& v);
-
+	float PlaneDistance(const ClipVertex& v, const ClipPlane plane);
+	ClipVertex InterpolateClipVertex(const ClipVertex& a, const ClipVertex& b, float t);
+	std::vector<ClipVertex> ClipAgainstPlane(const std::vector<ClipVertex>& input, ClipPlane plane);
+	
 private:
 	Buffer<std::uint32_t> mColorBuffer;
 	Buffer<float> mDepthBuffer;

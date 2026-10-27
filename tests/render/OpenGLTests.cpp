@@ -1,6 +1,9 @@
 // MIT License - Copyright (c) 2026 AnselZ
 // SPDX-License-Identifier: MIT
 
+#include <QTemporaryDir>
+#include <QFile>
+
 #include "core/EngineRuntime.h"
 #include "render/opengl/OpenGLRenderBackend.h"
 
@@ -208,6 +211,54 @@ int main(int argc, char* argv[])
         const auto restored = ReadFrame(gl, backend->Render(*scene, 640, 480), context);
         Require(restored.Hash() == image.Hash(), "Reset restores the exact original GPU image");
 
+        auto* editedModel = scene->Models().front().get();
+        scene->Lights().front()->enabled = false;
+        Require(ReadFrame(gl, backend->Render(*scene, 640, 480), context).Hash() != image.Hash(), "Light enable changes GPU pixels");
+        scene->Lights().front()->enabled = true;
+        editedModel->GetMaterial()->SetShader(ShaderKind::Normal);
+        Require(ReadFrame(gl, backend->Render(*scene, 640, 480), context).Hash() != image.Hash(), "Shader selection changes GPU pixels");
+        editedModel->GetMaterial()->SetShader(ShaderKind::BlinnPhong);
+        QTemporaryDir editedAssets;
+        Require(editedAssets.isValid(), "Temporary GPU assets directory");
+        QImage normalMap(2, 2, QImage::Format_RGBA8888);
+        normalMap.fill(QColor(255, 128, 128));
+        const auto normalPath = editedAssets.filePath("normal.png");
+        Require(normalMap.save(normalPath) && editedModel->GetMaterial()->LoadTexture(normalPath.toStdString(), true), "Load normal texture for GPU test");
+        Require(ReadFrame(gl, backend->Render(*scene, 640, 480), context).Hash() != image.Hash(), "Normal texture changes GPU pixels");
+        Require(editedModel->GetMaterial()->LoadTexture("", true), "Clear normal texture");
+        const auto basePath = editedModel->GetMaterial()->TexturePath(false);
+        QImage redMap(2, 2, QImage::Format_RGBA8888);
+        redMap.fill(Qt::red);
+        const auto redPath = editedAssets.filePath("red.png");
+        Require(redMap.save(redPath) && editedModel->GetMaterial()->LoadTexture(redPath.toStdString(), false), "Load replacement base texture");
+        Require(ReadFrame(gl, backend->Render(*scene, 640, 480), context).Hash() != image.Hash(), "Base texture changes invalidate GPU material cache");
+        Require(editedModel->GetMaterial()->LoadTexture(basePath, false), "Restore base texture");
+        const auto oldPath = editedModel->MeshPath();
+        QFile triangle(editedAssets.filePath("triangle.obj"));
+        Require(triangle.open(QIODevice::WriteOnly), "Create mesh fixture");
+        const auto center = bounds.Center();
+        const float radius = bounds.Radius();
+        const auto obj = QString("v %1 %2 %3\nv %4 %2 %3\nv %5 %6 %3\nf 1 2 3\n")
+                             .arg(center.x - radius)
+                             .arg(center.y - radius)
+                             .arg(center.z)
+                             .arg(center.x + radius)
+                             .arg(center.x)
+                             .arg(center.y + radius);
+        triangle.write(obj.toUtf8());
+        triangle.close();
+        Require(editedModel->LoadMesh(triangle.fileName().toStdString()), "Replace mesh in place");
+        const auto replacementImage = ReadFrame(gl, backend->Render(*scene, 640, 480), context);
+        Require(replacementImage.Hash() != image.Hash() && replacementImage.ShadedPixels() > 100, "In-place mesh revision refreshes GPU geometry");
+        Require(editedModel->LoadMesh(oldPath), "Restore original mesh in place");
+        Require(ReadFrame(gl, backend->Render(*scene, 640, 480), context).Hash() == image.Hash(), "Restored mesh reuploads without manual cache invalidation");
+        Require(editedModel->LoadMesh(""), "Clear mesh");
+        Require(ReadFrame(gl, backend->Render(*scene, 640, 480), context).ShadedPixels() == 0, "Cleared mesh disappears from GPU frame");
+        Require(editedModel->LoadMesh(oldPath), "Reload mesh");
+        Require(ReadFrame(gl, backend->Render(*scene, 640, 480), context).Hash() == image.Hash(), "Mesh reload refreshes GPU cache");
+        editedModel->visible = false;
+        Require(ReadFrame(gl, backend->Render(*scene, 640, 480), context).ShadedPixels() == 0, "Visibility affects GPU rendering");
+        editedModel->visible = true;
         std::cerr << "Checking mesh invalidation and target resize...\n";
         backend->InvalidateMeshCache();
         CheckCurrent(context, surface);

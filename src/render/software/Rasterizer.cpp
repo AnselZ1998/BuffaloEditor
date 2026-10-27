@@ -136,7 +136,9 @@ void Rasterizer::DrawTriangle(
 	const RasterVertex& v0,
 	const RasterVertex& v1,
 	const RasterVertex& v2,
-	Shader* mShader)
+	Shader* mShader,
+	MaterialShaderParameters params
+)
 {
 	if (!mIsStarted)
 	{
@@ -219,7 +221,7 @@ void Rasterizer::DrawTriangle(
 				
 				fragment.depth = depth;
 
-				uint32_t color = mShader->Fragment(fragment);
+				uint32_t color = mShader->Fragment(fragment, params);
 
 				DrawPixel(i, j, depth, color);
 			}

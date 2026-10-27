@@ -6,6 +6,7 @@
 #include "editor/panels/viewport/ViewportPanel.h"
 #include "editor/panels/simulation/SimulationPanel.h"
 #include "core/EngineRuntime.h"
+#include "editor/scene/SceneEditorController.h"
 
 #include "editor/viewport/IViewport.h"
 #include "editor/ui/EditorTheme.h"
@@ -20,6 +21,9 @@
 #include <QTreeWidget>
 #include <QToolButton>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QLineEdit>
+#include <QCheckBox>
 #include <QDockWidget>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
@@ -239,10 +243,13 @@ int main(int argc, char* argv[])
         host.hide();
 
         SelectionService selection;
+        buffalo::EngineRuntime sceneRuntime;
+        Require(sceneRuntime.StartUp(), "Scene editor runtime starts");
+        SceneEditorController sceneEditor(sceneRuntime, selection, log);
         EditorUI editor;
         editor.SetCentralWidget(new ViewportPanel(viewport));
-        auto* hierarchyPanel = new HierarchyPanel(selection, true);
-        auto* inspectorPanel = new InspectorPanel(selection);
+        auto* hierarchyPanel = new HierarchyPanel(sceneEditor, selection);
+        auto* inspectorPanel = new InspectorPanel(sceneEditor, selection);
         editor.AddDock("Hierarchy", "HierarchyDock", hierarchyPanel, Qt::LeftDockWidgetArea);
         editor.AddDock("Inspector", "InspectorDock", inspectorPanel, Qt::RightDockWidgetArea);
         editor.AddDock("Log", "LogDock", new LogPanel(log), Qt::BottomDockWidgetArea);
@@ -267,11 +274,92 @@ int main(int argc, char* argv[])
         editor.ResetLayout();
         auto* tree = hierarchyPanel->findChild<QTreeWidget*>("SceneHierarchy");
         tree->topLevelItem(0)->setSelected(true);
-        Require(selection.SelectedId() == "scene", "Hierarchy writes shared selection state");
+        Require(selection.Selected().kind == SelectionKind::Scene, "Hierarchy writes typed selection state");
         auto* title = inspectorPanel->findChild<QLabel*>("SelectionTitle");
-        Require(title->text() == "Selected: scene", "Inspector observes selection without knowing Hierarchy");
+        Require(title->text() == QString::fromStdString(sceneRuntime.GetSceneManager().GetCurrentScene()->name), "Inspector observes selection without knowing Hierarchy");
         selection.Clear();
         Require(tree->selectedItems().isEmpty() && title->text() == "Nothing selected", "Clearing shared selection updates both independent panels");
+        auto* firstScene = sceneRuntime.GetSceneManager().GetCurrentScene();
+        const SceneId firstSceneId = firstScene->Id();
+        auto* firstModel = firstScene->Models().front().get();
+        const SelectionTarget firstModelTarget{SelectionKind::Model, firstSceneId, firstModel->Id()};
+        sceneEditor.Select(firstModelTarget);
+        Require(inspectorPanel->findChild<QLineEdit*>("Mesh Path") != nullptr, "Model Inspector exposes mesh path");
+        auto* positionX = inspectorPanel->findChild<QDoubleSpinBox*>("Position0");
+        Require(positionX != nullptr, "Model Inspector exposes transform");
+        positionX->setValue(2.5);
+        inspectorPanel->findChild<QPushButton*>("Apply Transform")->click();
+        Require(std::abs(firstModel->Position().x - 2.5f) < 0.001f, "Inspector edits the selected model");
+        auto* visible = inspectorPanel->findChild<QCheckBox*>("ModelVisible");
+        visible->setChecked(false);
+        Require(firstScene->GetVisibleModels()->empty(), "Hidden models leave the render queue");
+        Require(tree->topLevelItem(0)->child(0)->checkState(0) == Qt::Unchecked, "Inspector visibility synchronizes Hierarchy");
+        tree->topLevelItem(0)->child(0)->setCheckState(0, Qt::Checked);
+        Require(firstModel->visible && visible->isChecked(), "Hierarchy visibility synchronizes Inspector");
+        const auto meshRevision = firstModel->MeshRevision();
+        const auto meshPath = firstModel->MeshPath();
+        Require(!sceneEditor.SetMesh(firstModelTarget, "missing-mesh.obj") && firstModel->MeshRevision() == meshRevision &&
+                    firstModel->MeshPath() == meshPath,
+            "Failed mesh load keeps old mesh and path");
+        const auto* materialTexture = firstModel->GetMaterial()->GetBaseColorTexture();
+        Require(!sceneEditor.SetTexture(firstModelTarget, "missing-texture.png", false) &&
+                    firstModel->GetMaterial()->GetBaseColorTexture() == materialTexture,
+            "Failed texture load retains texture");
+        QImage texture(2, 2, QImage::Format_RGBA8888);
+        texture.fill(Qt::red);
+        const QString texturePath = directory.filePath("base.png");
+        Require(texture.save(texturePath), "Texture fixture saved");
+        Require(sceneEditor.SetTexture(firstModelTarget, texturePath.toStdString(), false), "Load base texture");
+        Require(sceneEditor.SetTexture(firstModelTarget, texturePath.toStdString(), true), "Load normal texture");
+        Require(firstModel->GetMaterial()->GetShaderParameters().normalTexture != nullptr, "Normal texture is bound");
+        Require(sceneEditor.SetTexture(firstModelTarget, "", true) &&
+                    firstModel->GetMaterial()->GetShaderParameters().normalTexture == nullptr,
+            "Empty path clears normal texture");
+        Require(sceneEditor.SetMaterial(firstModelTarget, ShaderKind::Unlit, {0.25f, 0.5f, 0.75f}), "Shader and color can change");
+        sceneEditor.AddObject(SelectionKind::Camera);
+        const auto cameraTarget = selection.Selected();
+        auto* camera = sceneEditor.ResolveCamera(cameraTarget);
+        Require(camera && firstScene->Cameras().size() == 2, "Can add multiple cameras");
+        CameraSettings cameraSettings{{0, 2, 5}, {0, 0, 0}, {0, 1, 0}, 45, 0.2f, 200, 1.5f, false};
+        Require(sceneEditor.SetCamera(cameraTarget, cameraSettings) && sceneEditor.SetActiveCamera(cameraTarget), "Set and activate camera");
+        cameraSettings.farZ = 0.1f;
+        Require(!sceneEditor.SetCamera(cameraTarget, cameraSettings) && camera->farZ == 200, "Invalid clipping planes preserve camera");
+        sceneEditor.AddObject(SelectionKind::Light);
+        const auto lightTarget = selection.Selected();
+        auto* light = sceneEditor.ResolveLight(lightTarget);
+        Require(light && firstScene->Lights().size() == 2, "Can add multiple lights");
+        LightSettings lightSettings;
+        lightSettings.direction = {0, -1, 0};
+        lightSettings.orbit = {true, {1, 2, 3}, 4, 2, 90, 0};
+        Require(sceneEditor.SetLight(lightTarget, lightSettings), "Orbit settings accepted");
+        sceneRuntime.Update(1.0);
+        Require((light->position - Vector3(1, 4, 7)).Length() < 0.001f, "Orbit advances by elapsed time around target");
+        Require((light->direction - (lightSettings.orbit.target - light->position).Normalized()).Length() < 0.001f, "Orbit aims light at target");
+        lightSettings.orbit.enabled = false;
+        lightSettings.position = light->position;
+        lightSettings.direction = light->direction;
+        Require(sceneEditor.SetLight(lightTarget, lightSettings), "Orbit can stop");
+        sceneRuntime.Update(1.0);
+        Require((light->position - lightSettings.position).Length() < 0.001f, "Disabled orbit freezes pose");
+        const SceneId secondId = sceneEditor.CreateScene();
+        sceneEditor.AddObject(SelectionKind::Model);
+        const auto secondModelTarget = selection.Selected();
+        Require(secondModelTarget.sceneId == secondId && !sceneEditor.ResolveModel(secondModelTarget)->MeshValid(), "New model is an editable empty slot");
+        Require(sceneEditor.SetMesh(secondModelTarget, meshPath), "New model loads mesh");
+        Require(sceneRuntime.GetSimulationSystem().HasBodies(), "Mesh edit rebinds current simulation");
+        Require(sceneEditor.SetCurrentScene(firstSceneId), "Switch back to first Scene");
+        Require(firstModel->Position().x == 2.5f && firstScene->Models().size() == 1, "Scene contents remain isolated across switches");
+        for (int i = 0; i < 70; ++i)
+        {
+            sceneEditor.Scenes().CreateScene("Extra");
+        }
+        Require(sceneEditor.ResolveModel(firstModelTarget) == firstModel, "IDs survive scene container growth");
+        sceneEditor.Select({SelectionKind::Model, secondId, firstModel->Id()});
+        Require(selection.Selected().kind == SelectionKind::None, "Cross-scene or stale IDs are rejected");
+        sceneEditor.Select(firstModelTarget);
+        QApplication::processEvents();
+        Require(tree->topLevelItemCount() == 72, "Hierarchy lists every scene");
+        Require(editor.grab().save(QCoreApplication::applicationDirPath() + "/scene-editor-test-preview.png"), "Capture new editor UI");
         std::cerr << "Checking simulation timeline transport and deterministic replay...\n";
         buffalo::EngineRuntime simulationRuntime;
         Require(simulationRuntime.StartUp(), "Simulation test runtime starts");

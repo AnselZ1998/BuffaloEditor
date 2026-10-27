@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <string>
+#include "core/ILogger.h"
 
 namespace buffalo::editor
 {
@@ -20,14 +21,14 @@ enum class LogLevel
 
 // Lightweight editor log.
 // Logs stay in memory by default and are only written to disk through SaveLog().
-class EditorLog
+class EditorLog : public buffalo::ILogger
 {
 public:
     void Trace(const std::string& message);
-    void Debug(const std::string& message);
-    void Info(const std::string& message);
-    void Warning(const std::string& message);
-    void Error(const std::string& message);
+    void Debug(const std::string& message) override;
+    void Info(const std::string& message) override;
+    void Warning(const std::string& message) override;
+    void Error(const std::string& message) override;
 
     // Compatibility with existing code. Write() behaves as Info().
     void Write(const std::string& message);

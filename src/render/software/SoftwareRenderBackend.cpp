@@ -39,8 +39,10 @@ RenderFrame SoftwareRenderBackend::Render(Scene& scene, int width, int height)
     renderer_.SetCameraToRender(scene.getCurrentCamera());
     renderer_.BeginFrame(0xFF25282Du);
     auto* models = scene.GetVisibleModels();
+    const auto lighting = scene.Lighting();
     while (!models->empty())
     {
+        models->front()->GetMaterial()->lights = lighting;
         renderer_.drawTriangularMesh(models->front());
         models->pop();
     }
@@ -50,6 +52,12 @@ RenderFrame SoftwareRenderBackend::Render(Scene& scene, int width, int height)
     {
         return {};
     }
-    return {buffer->Data(), buffer->GetWidth(), buffer->GetHeight(), buffer->GetPitchBytes(), PixelFormat::BGRA8};
+    return RenderFrame{
+        buffer->Data(), 
+        buffer->GetWidth(), 
+        buffer->GetHeight(), 
+        buffer->GetPitchBytes(), 
+        PixelFormat::BGRA8
+    };
 }
 } // namespace buffalo

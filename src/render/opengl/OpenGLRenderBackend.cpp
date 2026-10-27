@@ -35,8 +35,7 @@ public:
         if (context.thread() != QThread::currentThread() || !context.makeCurrent(&surface))
         {
             throw std::runtime_error(
-                "OpenGL: cannot make the rendering context current on this thread."
-            );
+                "OpenGL: cannot make the rendering context current on this thread.");
         }
     }
 
@@ -60,6 +59,7 @@ struct GpuVertex
 {
     float position[3];
     float normal[3];
+    float uv[2];
 };
 
 bool ValidIndex(int index, std::size_t size)
@@ -90,6 +90,10 @@ public:
         GLuint vertexArray = 0;
         GLuint vertexBuffer = 0;
         GLsizei vertexCount = 0;
+        ObjectId modelId = 0;
+        std::uint64_t revision = 0;
+        std::uint64_t textureRevision = 0;
+        GLuint textures[2]{};
     };
 
     void Initialize(QOpenGLContext* shareContext)
@@ -97,15 +101,13 @@ public:
         if (!shareContext || !shareContext->isValid() || shareContext->isOpenGLES())
         {
             throw std::runtime_error(
-                "OpenGL: a valid desktop OpenGL sharing context is required."
-            );
+                "OpenGL: a valid desktop OpenGL sharing context is required.");
         }
 
         if (shareContext->thread() != QThread::currentThread())
         {
             throw std::runtime_error(
-                "OpenGL: initialize on the viewport context's thread."
-            );
+                "OpenGL: initialize on the viewport context's thread.");
         }
 
         QSurfaceFormat format = shareContext->format();
@@ -119,8 +121,7 @@ public:
             !QOpenGLContext::areSharing(&context, shareContext))
         {
             throw std::runtime_error(
-                "OpenGL: failed to create a shared OpenGL 3.3 context."
-            );
+                "OpenGL: failed to create a shared OpenGL 3.3 context.");
         }
 
         surface.setFormat(context.format());
@@ -129,8 +130,7 @@ public:
         if (!surface.isValid())
         {
             throw std::runtime_error(
-                "OpenGL: failed to create the offscreen surface."
-            );
+                "OpenGL: failed to create the offscreen surface.");
         }
 
         CurrentContextScope current(context, surface);
@@ -138,8 +138,7 @@ public:
         if (!initializeOpenGLFunctions())
         {
             throw std::runtime_error(
-                "OpenGL: OpenGL 3.3 core functions are unavailable."
-            );
+                "OpenGL: OpenGL 3.3 core functions are unavailable.");
         }
 
         functionsReady = true;
@@ -148,19 +147,16 @@ public:
 
         modelLocation = glGetUniformLocation(
             program,
-            "model"
-        );
+            "model");
 
         viewProjectionLocation = glGetUniformLocation(
             program,
-            "viewProjection"
-        );
+            "viewProjection");
 
         if (modelLocation < 0 || viewProjectionLocation < 0)
         {
             throw std::runtime_error(
-                "OpenGL: mesh shader is missing required matrix uniforms."
-            );
+                "OpenGL: mesh shader is missing required matrix uniforms.");
         }
 
         GLint maxTexture = 0;
@@ -168,18 +164,15 @@ public:
 
         glGetIntegerv(
             GL_MAX_TEXTURE_SIZE,
-            &maxTexture
-        );
+            &maxTexture);
 
         glGetIntegerv(
             GL_MAX_RENDERBUFFER_SIZE,
-            &maxRenderbuffer
-        );
+            &maxRenderbuffer);
 
         maxTargetSize = std::min(
             maxTexture,
-            maxRenderbuffer
-        );
+            maxRenderbuffer);
     }
 
     ~Impl()
@@ -221,8 +214,7 @@ public:
         if (width > maxTargetSize || height > maxTargetSize)
         {
             throw std::runtime_error(
-                "OpenGL: requested viewport exceeds the device's render target limit."
-            );
+                "OpenGL: requested viewport exceeds the device's render target limit.");
         }
 
         CurrentContextScope current(context, surface);
@@ -231,15 +223,13 @@ public:
 
         glBindFramebuffer(
             GL_FRAMEBUFFER,
-            framebuffer
-        );
+            framebuffer);
 
         glViewport(
             0,
             0,
             width,
-            height
-        );
+            height);
 
         glDisable(GL_BLEND);
         glDisable(GL_SCISSOR_TEST);
@@ -257,15 +247,13 @@ public:
             37.0f / 255.0f,
             40.0f / 255.0f,
             45.0f / 255.0f,
-            1.0f
-        );
+            1.0f);
 
         glClearDepth(1.0);
 
         glClear(
             GL_COLOR_BUFFER_BIT |
-            GL_DEPTH_BUFFER_BIT
-        );
+            GL_DEPTH_BUFFER_BIT);
 
         std::unordered_set<const Mesh*> usedMeshes;
 
@@ -274,6 +262,16 @@ public:
         if (camera)
         {
             glUseProgram(program);
+            const auto lights = scene.Lighting();
+            const int lightCount = static_cast<int>(std::min<std::size_t>(lights.size(), 64));
+            glUniform1i(glGetUniformLocation(program, "lightCount"), lightCount);
+            for (int i = 0; i < lightCount; ++i)
+            {
+                const auto& light = lights[i];
+                const auto suffix = "[" + std::to_string(i) + "]";
+                glUniform3f(glGetUniformLocation(program, ("lightDirections" + suffix).c_str()), light.directionToLight.x, light.directionToLight.y, light.directionToLight.z);
+                glUniform3f(glGetUniformLocation(program, ("lightRadiance" + suffix).c_str()), light.radiance.x, light.radiance.y, light.radiance.z);
+            }
 
             const Matrix4 viewProjection =
                 camera->projectionMatrix *
@@ -284,8 +282,7 @@ public:
                 viewProjectionLocation,
                 1,
                 GL_TRUE,
-                viewProjection._data
-            );
+                viewProjection._data);
 
             auto* models = scene.GetVisibleModels();
 
@@ -304,17 +301,25 @@ public:
                 usedMeshes.insert(mesh);
 
                 auto it = meshes.find(mesh);
+                if (it != meshes.end() && (it->second.revision != model->MeshRevision() || it->second.modelId != model->Id()))
+                {
+                    DeleteMesh(it->second);
+                    meshes.erase(it);
+                    it = meshes.end();
+                }
 
                 if (it == meshes.end())
                 {
-                    const GpuMesh uploaded = UploadMesh(*mesh);
+                    GpuMesh uploaded = UploadMesh(*mesh);
+                    uploaded.revision = model->MeshRevision();
+                    uploaded.modelId = model->Id();
 
                     try
                     {
                         it = meshes.emplace(
-                            mesh,
-                            uploaded
-                        ).first;
+                                       mesh,
+                                       uploaded)
+                                 .first;
                     }
                     catch (...)
                     {
@@ -323,22 +328,20 @@ public:
                     }
                 }
 
+                BindMaterial(it->second, *model->GetMaterial());
                 glUniformMatrix4fv(
                     modelLocation,
                     1,
                     GL_TRUE,
-                    model->GetModelMatrix()._data
-                );
+                    model->GetModelMatrix()._data);
 
                 glBindVertexArray(
-                    it->second.vertexArray
-                );
+                    it->second.vertexArray);
 
                 glDrawArrays(
                     GL_TRIANGLES,
                     0,
-                    it->second.vertexCount
-                );
+                    it->second.vertexCount);
             }
 
             glBindVertexArray(0);
@@ -362,8 +365,7 @@ public:
 
         glBindFramebuffer(
             GL_FRAMEBUFFER,
-            0
-        );
+            0);
 
         // Synchronous v1 contract. The producer texture is complete before
         // the presentation context consumes it.
@@ -375,8 +377,7 @@ public:
         {
             throw std::runtime_error(
                 "OpenGL: rendering failed, error " +
-                std::to_string(error)
-            );
+                std::to_string(error));
         }
 
         RenderFrame output;
@@ -400,19 +401,16 @@ public:
 private:
     GLuint CompileShader(
         GLenum stage,
-        const char* resourcePath
-    )
+        const char* resourcePath)
     {
         QFile file(
-            QString::fromUtf8(resourcePath)
-        );
+            QString::fromUtf8(resourcePath));
 
         if (!file.open(QIODevice::ReadOnly))
         {
             throw std::runtime_error(
                 std::string("OpenGL: cannot load shader ") +
-                resourcePath
-            );
+                resourcePath);
         }
 
         const QByteArray source = file.readAll();
@@ -425,8 +423,7 @@ private:
             shader,
             1,
             &data,
-            nullptr
-        );
+            nullptr);
 
         glCompileShader(shader);
 
@@ -435,8 +432,7 @@ private:
         glGetShaderiv(
             shader,
             GL_COMPILE_STATUS,
-            &success
-        );
+            &success);
 
         if (!success)
         {
@@ -445,22 +441,18 @@ private:
             glGetShaderiv(
                 shader,
                 GL_INFO_LOG_LENGTH,
-                &size
-            );
+                &size);
 
             std::vector<char> log(
                 static_cast<std::size_t>(
-                    std::max(size, 1)
-                ),
-                '\0'
-            );
+                    std::max(size, 1)),
+                '\0');
 
             glGetShaderInfoLog(
                 shader,
                 static_cast<GLsizei>(log.size()),
                 nullptr,
-                log.data()
-            );
+                log.data());
 
             glDeleteShader(shader);
 
@@ -468,8 +460,7 @@ private:
                 std::string("OpenGL shader ") +
                 resourcePath +
                 ": " +
-                log.data()
-            );
+                log.data());
         }
 
         return shader;
@@ -485,25 +476,21 @@ private:
         {
             vertex = CompileShader(
                 GL_VERTEX_SHADER,
-                ":/buffalo/shaders/opengl/mesh.vert"
-            );
+                ":/buffalo/shaders/opengl/mesh.vert");
 
             fragment = CompileShader(
                 GL_FRAGMENT_SHADER,
-                ":/buffalo/shaders/opengl/diffuse.frag"
-            );
+                ":/buffalo/shaders/opengl/diffuse.frag");
 
             result = glCreateProgram();
 
             glAttachShader(
                 result,
-                vertex
-            );
+                vertex);
 
             glAttachShader(
                 result,
-                fragment
-            );
+                fragment);
 
             glLinkProgram(result);
 
@@ -512,8 +499,7 @@ private:
             glGetProgramiv(
                 result,
                 GL_LINK_STATUS,
-                &success
-            );
+                &success);
 
             if (!success)
             {
@@ -522,40 +508,32 @@ private:
                 glGetProgramiv(
                     result,
                     GL_INFO_LOG_LENGTH,
-                    &size
-                );
+                    &size);
 
                 std::vector<char> log(
                     static_cast<std::size_t>(
-                        std::max(size, 1)
-                    ),
-                    '\0'
-                );
+                        std::max(size, 1)),
+                    '\0');
 
                 glGetProgramInfoLog(
                     result,
                     static_cast<GLsizei>(log.size()),
                     nullptr,
-                    log.data()
-                );
+                    log.data());
 
                 throw std::runtime_error(
                     std::string(
-                        "OpenGL mesh program link: "
-                    ) +
-                    log.data()
-                );
+                        "OpenGL mesh program link: ") +
+                    log.data());
             }
 
             glDetachShader(
                 result,
-                vertex
-            );
+                vertex);
 
             glDetachShader(
                 result,
-                fragment
-            );
+                fragment);
 
             glDeleteShader(vertex);
             glDeleteShader(fragment);
@@ -590,27 +568,23 @@ private:
         const std::size_t faceCount = std::min(
             mesh.vertexIndices.size(),
             static_cast<std::size_t>(
-                std::max(mesh.numFaces, 0)
-            )
-        );
+                std::max(mesh.numFaces, 0)));
 
         if (faceCount >
             static_cast<std::size_t>(
-                std::numeric_limits<GLsizei>::max()
-            ) / 3)
+                std::numeric_limits<GLsizei>::max()) /
+                3)
         {
             throw std::runtime_error(
-                "OpenGL: mesh is too large for one draw."
-            );
+                "OpenGL: mesh is too large for one draw.");
         }
 
         vertices.reserve(
-            faceCount * 3
-        );
+            faceCount * 3);
 
         for (std::size_t face = 0;
-             face < faceCount;
-             ++face)
+            face < faceCount;
+            ++face)
         {
             const Vector3i indices =
                 mesh.vertexIndices[face];
@@ -634,17 +608,15 @@ private:
             const Vector3 faceNormal =
                 Vector3::Cross(
                     p1 - p0,
-                    p2 - p0
-                ).Normalized();
+                    p2 - p0)
+                    .Normalized();
 
             for (int corner = 0;
-                 corner < 3;
-                 ++corner)
+                corner < 3;
+                ++corner)
             {
                 const Vector3& position =
-                    mesh.vertices[
-                        indices[corner]
-                    ];
+                    mesh.vertices[indices[corner]];
 
                 Vector3 normal =
                     faceNormal;
@@ -652,29 +624,26 @@ private:
                 if (face < mesh.normalsIndices.size() &&
                     ValidIndex(
                         mesh.normalsIndices[face][corner],
-                        mesh.normals.size()
-                    ))
+                        mesh.normals.size()))
                 {
                     normal =
-                        mesh.normals[
-                            mesh.normalsIndices[face][corner]
-                        ];
+                        mesh.normals[mesh.normalsIndices[face][corner]];
                 }
 
+                Vector3 uv;
+                if (face < mesh.uvIndices.size() && ValidIndex(mesh.uvIndices[face][corner], mesh.uv.size()))
+                {
+                    uv = mesh.uv[mesh.uvIndices[face][corner]];
+                }
                 vertices.push_back(
-                    {
-                        {
-                            position.x,
-                            position.y,
-                            position.z
-                        },
-                        {
-                            normal.x,
+                    {{position.x,
+                         position.y,
+                         position.z},
+                        {normal.x,
                             normal.y,
-                            normal.z
-                        }
-                    }
-                );
+                            normal.z},
+                        {uv.x,
+                            uv.y}});
             }
         }
 
@@ -682,32 +651,26 @@ private:
 
         glGenVertexArrays(
             1,
-            &result.vertexArray
-        );
+            &result.vertexArray);
 
         glGenBuffers(
             1,
-            &result.vertexBuffer
-        );
+            &result.vertexBuffer);
 
         glBindVertexArray(
-            result.vertexArray
-        );
+            result.vertexArray);
 
         glBindBuffer(
             GL_ARRAY_BUFFER,
-            result.vertexBuffer
-        );
+            result.vertexBuffer);
 
         glBufferData(
             GL_ARRAY_BUFFER,
             static_cast<GLsizeiptr>(
                 vertices.size() *
-                sizeof(GpuVertex)
-            ),
+                sizeof(GpuVertex)),
             vertices.data(),
-            GL_STATIC_DRAW
-        );
+            GL_STATIC_DRAW);
 
         glEnableVertexAttribArray(0);
 
@@ -717,8 +680,7 @@ private:
             GL_FLOAT,
             GL_FALSE,
             sizeof(GpuVertex),
-            nullptr
-        );
+            nullptr);
 
         glEnableVertexAttribArray(1);
 
@@ -731,17 +693,15 @@ private:
             reinterpret_cast<const void*>(
                 offsetof(
                     GpuVertex,
-                    normal
-                )
-            )
-        );
+                    normal)));
 
+        glEnableVertexAttribArray(2);
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(GpuVertex), reinterpret_cast<const void*>(offsetof(GpuVertex, uv)));
         glBindVertexArray(0);
 
         glBindBuffer(
             GL_ARRAY_BUFFER,
-            0
-        );
+            0);
 
         const GLenum error =
             glGetError();
@@ -752,34 +712,70 @@ private:
 
             throw std::runtime_error(
                 "OpenGL: mesh upload failed, error " +
-                std::to_string(error)
-            );
+                std::to_string(error));
         }
 
         result.vertexCount =
             static_cast<GLsizei>(
-                vertices.size()
-            );
+                vertices.size());
 
         return result;
     }
 
+    void BindMaterial(GpuMesh& mesh, Material& material)
+    {
+        const auto params = material.GetShaderParameters();
+        const Texture2D* sources[2]{params.baseColorTexture, params.normalTexture};
+        if (mesh.textureRevision != material.TextureRevision())
+        {
+            glDeleteTextures(2, mesh.textures);
+            mesh.textures[0] = mesh.textures[1] = 0;
+            for (int i = 0; i < 2; ++i)
+            {
+                if (!sources[i])
+                {
+                    continue;
+                }
+                glActiveTexture(GL_TEXTURE0 + i);
+                glGenTextures(1, &mesh.textures[i]);
+                glBindTexture(GL_TEXTURE_2D, mesh.textures[i]);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, sources[i]->GetWidth(), sources[i]->GetHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, sources[i]->Data());
+            }
+            mesh.textureRevision = material.TextureRevision();
+        }
+        for (int i = 0; i < 2; ++i)
+        {
+            glActiveTexture(GL_TEXTURE0 + i);
+            glBindTexture(GL_TEXTURE_2D, mesh.textures[i]);
+        }
+        glUniform1i(glGetUniformLocation(program, "baseTexture"), 0);
+        glUniform1i(glGetUniformLocation(program, "normalTexture"), 1);
+        glUniform1i(glGetUniformLocation(program, "hasBaseTexture"), sources[0] != nullptr);
+        glUniform1i(glGetUniformLocation(program, "hasNormalTexture"), sources[1] != nullptr);
+        glUniform1i(glGetUniformLocation(program, "shaderKind"), static_cast<int>(material.GetShaderKind()));
+        glUniform3f(glGetUniformLocation(program, "baseColor"), material.baseColor.x, material.baseColor.y, material.baseColor.z);
+        glActiveTexture(GL_TEXTURE0);
+    }
+
     void DeleteMesh(const GpuMesh& mesh)
     {
+        glDeleteTextures(2, mesh.textures);
         if (mesh.vertexBuffer != 0)
         {
             glDeleteBuffers(
                 1,
-                &mesh.vertexBuffer
-            );
+                &mesh.vertexBuffer);
         }
 
         if (mesh.vertexArray != 0)
         {
             glDeleteVertexArrays(
                 1,
-                &mesh.vertexArray
-            );
+                &mesh.vertexArray);
         }
     }
 
@@ -788,8 +784,7 @@ private:
         for (const auto& item : meshes)
         {
             DeleteMesh(
-                item.second
-            );
+                item.second);
         }
 
         meshes.clear();
@@ -807,37 +802,31 @@ private:
 
         glGenTextures(
             1,
-            &colorTexture
-        );
+            &colorTexture);
 
         glBindTexture(
             GL_TEXTURE_2D,
-            colorTexture
-        );
+            colorTexture);
 
         glTexParameteri(
             GL_TEXTURE_2D,
             GL_TEXTURE_MIN_FILTER,
-            GL_LINEAR
-        );
+            GL_LINEAR);
 
         glTexParameteri(
             GL_TEXTURE_2D,
             GL_TEXTURE_MAG_FILTER,
-            GL_LINEAR
-        );
+            GL_LINEAR);
 
         glTexParameteri(
             GL_TEXTURE_2D,
             GL_TEXTURE_WRAP_S,
-            GL_CLAMP_TO_EDGE
-        );
+            GL_CLAMP_TO_EDGE);
 
         glTexParameteri(
             GL_TEXTURE_2D,
             GL_TEXTURE_WRAP_T,
-            GL_CLAMP_TO_EDGE
-        );
+            GL_CLAMP_TO_EDGE);
 
         glTexImage2D(
             GL_TEXTURE_2D,
@@ -848,70 +837,58 @@ private:
             0,
             GL_RGBA,
             GL_UNSIGNED_BYTE,
-            nullptr
-        );
+            nullptr);
 
         glGenRenderbuffers(
             1,
-            &depthBuffer
-        );
+            &depthBuffer);
 
         glBindRenderbuffer(
             GL_RENDERBUFFER,
-            depthBuffer
-        );
+            depthBuffer);
 
         glRenderbufferStorage(
             GL_RENDERBUFFER,
             GL_DEPTH_COMPONENT24,
             width,
-            height
-        );
+            height);
 
         glGenFramebuffers(
             1,
-            &framebuffer
-        );
+            &framebuffer);
 
         glBindFramebuffer(
             GL_FRAMEBUFFER,
-            framebuffer
-        );
+            framebuffer);
 
         glFramebufferTexture2D(
             GL_FRAMEBUFFER,
             GL_COLOR_ATTACHMENT0,
             GL_TEXTURE_2D,
             colorTexture,
-            0
-        );
+            0);
 
         glFramebufferRenderbuffer(
             GL_FRAMEBUFFER,
             GL_DEPTH_ATTACHMENT,
             GL_RENDERBUFFER,
-            depthBuffer
-        );
+            depthBuffer);
 
         const GLenum status =
             glCheckFramebufferStatus(
-                GL_FRAMEBUFFER
-            );
+                GL_FRAMEBUFFER);
 
         glBindTexture(
             GL_TEXTURE_2D,
-            0
-        );
+            0);
 
         glBindRenderbuffer(
             GL_RENDERBUFFER,
-            0
-        );
+            0);
 
         glBindFramebuffer(
             GL_FRAMEBUFFER,
-            0
-        );
+            0);
 
         if (status != GL_FRAMEBUFFER_COMPLETE)
         {
@@ -919,8 +896,7 @@ private:
 
             throw std::runtime_error(
                 "OpenGL: incomplete framebuffer, status " +
-                std::to_string(status)
-            );
+                std::to_string(status));
         }
 
         targetWidth = width;
@@ -933,24 +909,21 @@ private:
         {
             glDeleteFramebuffers(
                 1,
-                &framebuffer
-            );
+                &framebuffer);
         }
 
         if (depthBuffer != 0)
         {
             glDeleteRenderbuffers(
                 1,
-                &depthBuffer
-            );
+                &depthBuffer);
         }
 
         if (colorTexture != 0)
         {
             glDeleteTextures(
                 1,
-                &colorTexture
-            );
+                &colorTexture);
         }
 
         framebuffer = 0;
@@ -983,8 +956,7 @@ OpenGLRenderBackend::OpenGLRenderBackend(QOpenGLContext* shareContext)
     : impl_(std::make_unique<Impl>())
 {
     impl_->Initialize(
-        shareContext
-    );
+        shareContext);
 }
 
 OpenGLRenderBackend::~OpenGLRenderBackend() = default;
@@ -997,14 +969,12 @@ const char* OpenGLRenderBackend::Name() const
 RenderFrame OpenGLRenderBackend::Render(
     Scene& scene,
     int width,
-    int height
-)
+    int height)
 {
     return impl_->Render(
         scene,
         width,
-        height
-    );
+        height);
 }
 
 void OpenGLRenderBackend::InvalidateMeshCache()

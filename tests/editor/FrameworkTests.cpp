@@ -70,6 +70,8 @@ int main()
 
         EditorLog log;
         EngineRuntime runtime;
+        log.SetLevel(LogLevel::Debug);
+        runtime.SetLogger(&log);
         Require(runtime.StartUp(), "Runtime starts the existing scene");
         Require(runtime.StartUp() && runtime.GetRenderSystem().BackendCount() == 1, "Repeated startup does not duplicate scenes or backends");
         Scene* scene = runtime.GetSceneManager().GetCurrentScene();
@@ -153,6 +155,53 @@ int main()
         Require(Hash(second) != originalHash, "Camera input must change real rendered pixels");
         controller.SetSize(400, 180);
         Require(controller.RenderFrame().width == 400, "Software renderer resizes");
+        const auto editedCameraPosition = sceneCamera->position + Vector3(0.5f, 0, 0);
+        sceneCamera->position = editedCameraPosition;
+        sceneCamera->fovYRadians = 0.8f;
+        sceneCamera->nearZ = 0.123f;
+        sceneCamera->farZ = 432.0f;
+        sceneCamera->autoAspect = false;
+        sceneCamera->aspect = 1.2f;
+        controller.RenderFrame();
+        Require((sceneCamera->position - editedCameraPosition).Length() < 1e-5f && sceneCamera->fovYRadians == 0.8f &&
+                    sceneCamera->nearZ == 0.123f && sceneCamera->farZ == 432.0f && sceneCamera->aspect == 1.2f,
+            "Rendering preserves Inspector camera edits");
+        controller.OnInput({InputAction::Pan, 0.01f, 0});
+        Require(sceneCamera->fovYRadians == 0.8f && sceneCamera->nearZ == 0.123f && sceneCamera->aspect == 1.2f,
+            "Navigation preserves lens and manual aspect");
+        const auto lit = Hash(controller.RenderFrame());
+        scene->Lights().front()->enabled = false;
+        Require(Hash(controller.RenderFrame()) != lit, "Scene light changes alter CPU pixels");
+        scene->Lights().front()->enabled = true;
+        scene->Models().front()->GetMaterial()->SetShader(ShaderKind::Unlit);
+        Require(Hash(controller.RenderFrame()) != lit, "Shader selection changes CPU pixels");
+        const auto firstSceneId = scene->Id();
+        auto& otherScene = runtime.GetSceneManager().CreateScene("Other");
+        runtime.GetSceneManager().SetCurrentScene(otherScene.Id());
+        const auto firstPosition = scene->Models().front()->Position();
+        runtime.StepSimulation();
+        Require(!runtime.GetSimulationSystem().HasBodies() && (scene->Models().front()->Position() - firstPosition).Length() < 1e-6f,
+            "Direct scene switch cannot step the previous scene simulation");
+        runtime.GetSceneManager().SetCurrentScene(firstSceneId);
+        runtime.Update(0);
+        Require(runtime.GetSimulationSystem().HasBodies(), "Switching back rebinds simulation");
+        runtime.GetRenderSystem().SelectBackend(9999);
+        try
+        {
+            runtime.GetRenderSystem().AddBackend(nullptr);
+        }
+        catch (const std::invalid_argument&)
+        {
+        }
+        bool debug = false, info = false, warning = false, error = false;
+        for (const auto& line : log.Lines())
+        {
+            debug |= line.find("[DEBUG]") != std::string::npos;
+            info |= line.find("[INFO ") != std::string::npos;
+            warning |= line.find("[WARN ") != std::string::npos;
+            error |= line.find("[ERROR]") != std::string::npos;
+        }
+        Require(debug && info && warning && error, "Runtime and Render send all four levels to EditorLog");
         controller.SetSize(0, 0);
         Require(!controller.RenderFrame().IsValid(), "No stale frame on zero-size viewport");
 

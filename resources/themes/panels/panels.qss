@@ -1,0 +1,20 @@
+QTreeWidget, QPlainTextEdit { background: #23272c; border: none; selection-background-color: #665039; }
+QTreeWidget::item { padding: 5px; }
+QHeaderView::section { background: #2c3137; border: none; padding: 6px; color: #aeb6c0; }
+QPlainTextEdit#LogMessages { font-family: "Consolas"; font-size: 12px; }
+QLabel#PanelHint { color: #949da9; padding: 7px; font-size: 11px; }
+QLabel#ViewportTitle { color: #dde1e7; font-weight: 600; }
+QWidget#SimulationPanel { background: #292d32; border-top: 1px solid #1c2024; }
+QSlider#SimulationTimeline { background: #24282d; color: #aeb6c0; border: none; }
+QWidget#SimulationPanel QPushButton { padding: 3px 8px; }
+QWidget#SimulationPanel QSpinBox { background: #202429; border: 1px solid #424851; padding: 3px 6px; }
+QWidget#SimulationPanel QSpinBox:focus { border-color: #aa834f; }
+QLabel#SimulationState { color: #d0a767; }
+QLabel#SimulationTime { color: #aeb6c0; font-family: "Consolas"; }
+QGroupBox { font-weight: 600; border: 1px solid #3a414a; border-radius: 4px; margin-top: 12px; padding-top: 9px; background: #292e35; }
+QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; padding: 0 6px; left: 8px; color: #dfbc86; }
+QScrollArea, QScrollArea > QWidget > QWidget { background: #252a30; }
+QLabel#SelectionTitle { font-size: 15px; font-weight: 600; padding: 8px 4px; color: #e3c18e; }
+QTreeWidget#SceneHierarchy { alternate-background-color: #282d34; outline: none; }
+QTreeWidget#SceneHierarchy::item:selected { background: #5c4b36; border-left: 2px solid #c5a16a; }
+QTreeWidget#SceneHierarchy::item:hover { background: #373e48; }

@@ -18,6 +18,8 @@ public:
     EngineRuntime(const EngineRuntime&) = delete;
     EngineRuntime& operator=(const EngineRuntime&) = delete;
     bool StartUp();
+    void SetLogger(ILogger* logger);
+    void RebindSimulation();
     void ShutDown();
     bool IsStarted() const;
     SceneManager& GetSceneManager();
@@ -39,5 +41,7 @@ private:
     SimulationSystem simulation_;
     SceneSimulationBinding simulationBinding_;
     bool started_ = false;
+    SceneId simulationScene_ = 0;
+    ILogger* logger_ = nullptr;
 };
 } // namespace buffalo
